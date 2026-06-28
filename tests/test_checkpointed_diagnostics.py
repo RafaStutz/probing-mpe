@@ -15,6 +15,10 @@ from probing_mpe.experiments.run_checkpointed_diagnostics import (
 
 
 CHECKPOINT_CONTENT = "checkpoint"
+LOW_FRAME = 2_498_560
+MID_FRAME = 4_999_168
+HIGH_FRAME = 7_499_776
+FINAL_FRAME = 10_000_000
 SINGLE_EPISODE = 1
 SMALL_TARGET_TRANSITIONS = 10
 SMALL_HISTORY_K = 3
@@ -70,6 +74,29 @@ class CheckpointedDiagnosticsTest(unittest.TestCase):
             discovered = discover_progress_checkpoint(run_dir, ProgressPercent.fifty)
 
             self.assertEqual(discovered, checkpoint_path)
+
+    def test_discover_progress_checkpoint_uses_nearest_lower_frame_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            checkpoints_dir = run_dir / "checkpoints"
+            checkpoints_dir.mkdir()
+            for frame in (LOW_FRAME, MID_FRAME, HIGH_FRAME, FINAL_FRAME):
+                (checkpoints_dir / f"checkpoint_{frame}.pt").write_text(
+                    CHECKPOINT_CONTENT,
+                    encoding="utf-8",
+                )
+
+            discovered_25 = discover_progress_checkpoint(
+                run_dir,
+                ProgressPercent.twenty_five,
+            )
+            discovered_100 = discover_progress_checkpoint(
+                run_dir,
+                ProgressPercent.one_hundred,
+            )
+
+            self.assertEqual(discovered_25.name, f"checkpoint_{LOW_FRAME}.pt")
+            self.assertEqual(discovered_100, run_dir / "checkpoint_final" / "checkpoint.pt")
 
     def test_run_checkpointed_diagnostics_exports_and_computes_all_progress_points(self) -> None:
         calls: list[tuple[str, int, Path]] = []

@@ -23,6 +23,7 @@ from probing_mpe.evaluation import (
     compute_diagnostics_for_trajectory,
     write_diagnostic_outputs,
 )
+from probing_mpe.experiments.artifacts import progress_checkpoint
 from probing_mpe.trajectories import (
     TARGET_DIAGNOSTIC_TRANSITIONS,
     export_trajectory_from_checkpoint,
@@ -119,6 +120,11 @@ def build_progress_artifact_paths(
 
 
 def discover_progress_checkpoint(run_dir: Path, progress: ProgressPercent) -> Path:
+    try:
+        return progress_checkpoint(run_dir, progress.value).path
+    except FileNotFoundError:
+        pass
+
     checkpoints_dir = run_dir / DirectoryName.checkpoints.value
     direct_checkpoint = checkpoints_dir / _format_file_name(
         FileNameTemplate.checkpoint_file, progress

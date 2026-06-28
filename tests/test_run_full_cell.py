@@ -5,6 +5,7 @@ import unittest
 from enum import Enum
 from pathlib import Path
 
+from probing_mpe.experiments.artifacts import ArtifactFileName, DirectoryName
 from probing_mpe.experiments.run_full_cell import (
     DEFAULT_SEEDS,
     FULL_CELL_CONFIG_ID,
@@ -25,6 +26,8 @@ PYTHON_EXECUTABLE = "python"
 FIRST_SEED = 0
 SECOND_SEED = 1
 EXPECTED_COMMANDS_PER_SEED = 4
+LOW_FRAME = 100
+HIGH_FRAME = 200
 
 
 class HydraOverride(str, Enum):
@@ -83,6 +86,27 @@ class FullCellRunnerTest(unittest.TestCase):
             discovered = discover_final_checkpoint(run_dir)
 
         self.assertEqual(discovered, checkpoint_path)
+
+    def test_discover_final_checkpoint_normalizes_largest_numbered_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            checkpoint_dir = run_dir / DirectoryName.checkpoints.value
+            checkpoint_dir.mkdir()
+            low_checkpoint = checkpoint_dir / f"checkpoint_{LOW_FRAME}.pt"
+            high_checkpoint = checkpoint_dir / f"checkpoint_{HIGH_FRAME}.pt"
+            low_checkpoint.write_text(str(LOW_FRAME), encoding="utf-8")
+            high_checkpoint.write_text(str(HIGH_FRAME), encoding="utf-8")
+
+            discovered = discover_final_checkpoint(run_dir)
+            discovered_content = discovered.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            discovered,
+            run_dir
+            / DirectoryName.checkpoint_final.value
+            / ArtifactFileName.checkpoint.value,
+        )
+        self.assertEqual(discovered_content, str(HIGH_FRAME))
 
     def test_run_full_cell_runs_three_seed_pipeline_in_order(self) -> None:
         commands: list[list[str]] = []

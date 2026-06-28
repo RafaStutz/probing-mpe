@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -9,6 +10,25 @@ from enum import Enum
 from pathlib import Path
 
 import yaml
+
+from probing_mpe.experiments.artifacts import (
+    ArtifactFileName,
+    CheckpointProgress,
+    MetadataStatus,
+    NormalizedCheckpoint,
+    RunArtifactPaths,
+    base_run_metadata,
+    behavioral_metrics_are_valid,
+    default_final_checkpoint,
+    diagnostics_are_valid,
+    normalize_final_checkpoint,
+    null_diagnostics_are_valid,
+    progress_checkpoints,
+    run_artifact_paths,
+    run_is_complete,
+    trajectory_is_valid,
+    write_run_metadata,
+)
 
 
 FULL_CELL_ENV_NAME = "simple_spread_v3"
@@ -19,7 +39,6 @@ DEFAULT_CONFIG_PATH = Path("configs/reduced_mpe/simple_spread_v3/ippo_rnn.yaml")
 DEFAULT_BENCHMARL_ROOT = Path("/tmp/BenchMARL")
 DEFAULT_OUTPUT_DIR = Path("runs")
 SUCCESS_RETURN_CODE = 0
-SINGLE_MATCH_COUNT = 1
 
 
 class ConfigKey(str, Enum):
@@ -86,6 +105,14 @@ class CliFlag(str, Enum):
     python_executable = "--python-executable"
     wandb_mode = "--wandb-mode"
     dry_run = "--dry-run"
+    force = "--force"
+
+
+class CommandName(str, Enum):
+    training = "training"
+    export = "export"
+    diagnostics = "diagnostics"
+    behavioral = "behavioral"
 
 
 class WandbMode(str, Enum):
@@ -124,6 +151,7 @@ class FullCellOutput:
     diagnostics_path: Path
     null_diagnostics_path: Path
     behavioral_metrics_path: Path
+    metadata_path: Path
 
 
 CommandRunner = Callable[[list[str], Path | None], int]
@@ -203,14 +231,22 @@ def run_full_cell(
     dry_run: bool,
     command_runner: CommandRunner | None = None,
     checkpoint_resolver: CheckpointResolver | None = None,
+    force: bool = False,
 ) -> list[FullCellOutput]:
     runner = command_runner or run_command
+    resolver_is_injected = checkpoint_resolver is not None
     resolver = checkpoint_resolver or discover_final_checkpoint
     full_cell_config = load_full_cell_config(config_path)
     outputs: list[FullCellOutput] = []
     for seed in seeds:
         run_dir = _run_dir(output_dir, full_cell_config.env_name, full_cell_config.config_id, seed)
         run_dir.mkdir(parents=True, exist_ok=True)
+        artifact_paths = run_artifact_paths(
+            env_name=full_cell_config.env_name,
+            config_id=full_cell_config.config_id,
+            seed=seed,
+            run_dir=run_dir,
+        )
         training_command = build_training_command(
             full_cell_config=full_cell_config,
             benchmarl_root=benchmarl_root,
@@ -219,15 +255,95 @@ def run_full_cell(
             python_executable=python_executable,
             wandb_enabled=wandb_enabled,
         )
-        _run_or_print(training_command, benchmarl_root, dry_run, runner)
+        output = _full_cell_output(
+            full_cell_config,
+            seed,
+            run_dir,
+            artifact_paths.checkpoint_path,
+        )
+        commands = _commands_for_output(output, training_command, python_executable)
+        if not force and not dry_run and run_is_complete(artifact_paths, False):
+            _write_metadata_for_output(
+                artifact_paths=artifact_paths,
+                status=MetadataStatus.complete,
+                benchmarl_root=benchmarl_root,
+                python_executable=python_executable,
+                wandb_enabled=wandb_enabled,
+                commands=commands,
+                final_checkpoint=NormalizedCheckpoint(
+                    source_path=artifact_paths.checkpoint_path,
+                    normalized_path=artifact_paths.checkpoint_path,
+                    frame=None,
+                ),
+                include_progress=False,
+            )
+            outputs.append(output)
+            continue
+
+        _write_metadata_for_output(
+            artifact_paths=artifact_paths,
+            status=MetadataStatus.started,
+            benchmarl_root=benchmarl_root,
+            python_executable=python_executable,
+            wandb_enabled=wandb_enabled,
+            commands=commands,
+            final_checkpoint=None,
+            include_progress=False,
+        )
+
+        if force or dry_run or not artifact_paths.checkpoint_path.exists():
+            _run_or_print(training_command, benchmarl_root, dry_run, runner)
 
         checkpoint_path = (
-            _default_final_checkpoint(run_dir) if dry_run else resolver(run_dir)
+            artifact_paths.checkpoint_path if dry_run else resolver(run_dir)
+        )
+        final_checkpoint = (
+            NormalizedCheckpoint(
+                source_path=checkpoint_path,
+                normalized_path=checkpoint_path,
+                frame=None,
+            )
+            if dry_run
+            else _resolved_final_checkpoint(
+                run_dir,
+                checkpoint_path,
+                allow_missing=resolver_is_injected,
+            )
         )
         output = _full_cell_output(full_cell_config, seed, run_dir, checkpoint_path)
-        _run_or_print(_export_command(output, python_executable), None, dry_run, runner)
-        _run_or_print(_diagnostics_command(output, python_executable), None, dry_run, runner)
-        _run_or_print(_behavioral_command(output, python_executable), None, dry_run, runner)
+        commands = _commands_for_output(output, training_command, python_executable)
+        _write_metadata_for_output(
+            artifact_paths=artifact_paths,
+            status=MetadataStatus.training_complete,
+            benchmarl_root=benchmarl_root,
+            python_executable=python_executable,
+            wandb_enabled=wandb_enabled,
+            commands=commands,
+            final_checkpoint=final_checkpoint,
+            include_progress=False,
+        )
+
+        if force or dry_run or not trajectory_is_valid(output.trajectory_path):
+            _run_or_print(_export_command(output, python_executable), None, dry_run, runner)
+        if (
+            force
+            or dry_run
+            or not diagnostics_are_valid(output.diagnostics_path)
+            or not null_diagnostics_are_valid(output.null_diagnostics_path)
+        ):
+            _run_or_print(_diagnostics_command(output, python_executable), None, dry_run, runner)
+        if force or dry_run or not behavioral_metrics_are_valid(output.behavioral_metrics_path):
+            _run_or_print(_behavioral_command(output, python_executable), None, dry_run, runner)
+        _write_metadata_for_output(
+            artifact_paths=artifact_paths,
+            status=MetadataStatus.complete,
+            benchmarl_root=benchmarl_root,
+            python_executable=python_executable,
+            wandb_enabled=wandb_enabled,
+            commands=commands,
+            final_checkpoint=final_checkpoint,
+            include_progress=False,
+        )
         outputs.append(output)
     return outputs
 
@@ -238,27 +354,7 @@ def run_command(command: list[str], cwd: Path | None) -> int:
 
 
 def discover_final_checkpoint(run_dir: Path) -> Path:
-    preferred = _default_final_checkpoint(run_dir)
-    if preferred.exists():
-        return preferred
-
-    checkpoint_dir = run_dir / FullCellDirectoryName.checkpoint_final.value
-    matches = (
-        sorted(checkpoint_dir.glob(FullCellArtifactName.checkpoint_glob.value))
-        if checkpoint_dir.exists()
-        else []
-    )
-    if len(matches) == SINGLE_MATCH_COUNT:
-        return matches[0]
-    if len(matches) > SINGLE_MATCH_COUNT:
-        raise ValueError(f"{ErrorMessage.ambiguous_checkpoint.value}: {matches}")
-
-    recursive_matches = sorted(run_dir.rglob(FullCellArtifactName.checkpoint_glob.value))
-    if len(recursive_matches) == SINGLE_MATCH_COUNT:
-        return recursive_matches[0]
-    if len(recursive_matches) > SINGLE_MATCH_COUNT:
-        raise ValueError(f"{ErrorMessage.ambiguous_checkpoint.value}: {recursive_matches}")
-    raise FileNotFoundError(f"{ErrorMessage.missing_checkpoint.value}: {run_dir}")
+    return normalize_final_checkpoint(run_dir).normalized_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -278,6 +374,7 @@ def parse_args() -> argparse.Namespace:
         default=WandbMode.online.value,
     )
     parser.add_argument(CliFlag.dry_run.value, action="store_true")
+    parser.add_argument(CliFlag.force.value, action="store_true")
     return parser.parse_args()
 
 
@@ -291,6 +388,7 @@ def main() -> int:
         python_executable=args.python_executable,
         wandb_enabled=args.wandb_mode != WandbMode.disabled.value,
         dry_run=bool(args.dry_run),
+        force=bool(args.force),
     )
     print(f"Prepared full-cell artifacts for {len(outputs)} seeds")
     return SUCCESS_RETURN_CODE
@@ -313,6 +411,7 @@ def _full_cell_output(
         diagnostics_path=run_dir / FullCellArtifactName.diagnostics_final.value,
         null_diagnostics_path=run_dir / FullCellArtifactName.diagnostics_null_final.value,
         behavioral_metrics_path=run_dir / FullCellArtifactName.behavioral_metrics_final.value,
+        metadata_path=run_dir / ArtifactFileName.run_metadata.value,
     )
 
 
@@ -357,6 +456,79 @@ def _behavioral_command(output: FullCellOutput, python_executable: str) -> list[
     ]
 
 
+def _commands_for_output(
+    output: FullCellOutput,
+    training_command: list[str],
+    python_executable: str,
+) -> dict[str, list[str]]:
+    return {
+        CommandName.training.value: training_command,
+        CommandName.export.value: _export_command(output, python_executable),
+        CommandName.diagnostics.value: _diagnostics_command(output, python_executable),
+        CommandName.behavioral.value: _behavioral_command(output, python_executable),
+    }
+
+
+def _write_metadata_for_output(
+    artifact_paths: RunArtifactPaths,
+    status: MetadataStatus,
+    benchmarl_root: Path,
+    python_executable: str,
+    wandb_enabled: bool,
+    commands: Mapping[str, Sequence[str]],
+    final_checkpoint: NormalizedCheckpoint | None,
+    include_progress: bool,
+) -> None:
+    progress_records: list[CheckpointProgress] = []
+    if include_progress:
+        try:
+            progress_records = progress_checkpoints(artifact_paths.run_dir)
+        except FileNotFoundError:
+            progress_records = []
+    write_run_metadata(
+        artifact_paths.metadata_path,
+        base_run_metadata(
+            paths=artifact_paths,
+            status=status,
+            benchmarl_root=benchmarl_root,
+            python_executable=python_executable,
+            wandb_enabled=wandb_enabled,
+            commands=commands,
+            final_checkpoint=final_checkpoint,
+            progress_records=progress_records,
+        ),
+    )
+
+
+def _resolved_final_checkpoint(
+    run_dir: Path,
+    checkpoint_path: Path,
+    allow_missing: bool,
+) -> NormalizedCheckpoint:
+    normalized_path = default_final_checkpoint(run_dir)
+    if checkpoint_path.exists() and checkpoint_path != normalized_path:
+        normalized_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(checkpoint_path, normalized_path)
+        return NormalizedCheckpoint(
+            source_path=checkpoint_path,
+            normalized_path=normalized_path,
+            frame=None,
+        )
+    if checkpoint_path.exists():
+        return NormalizedCheckpoint(
+            source_path=checkpoint_path,
+            normalized_path=checkpoint_path,
+            frame=None,
+        )
+    if allow_missing:
+        return NormalizedCheckpoint(
+            source_path=checkpoint_path,
+            normalized_path=checkpoint_path,
+            frame=None,
+        )
+    return normalize_final_checkpoint(run_dir)
+
+
 def _run_or_print(
     command: list[str],
     cwd: Path | None,
@@ -381,11 +553,7 @@ def _run_dir(output_dir: Path, env_name: str, config_id: str, seed: int) -> Path
 
 
 def _default_final_checkpoint(run_dir: Path) -> Path:
-    return (
-        run_dir
-        / FullCellDirectoryName.checkpoint_final.value
-        / FullCellArtifactName.generic_checkpoint.value
-    )
+    return default_final_checkpoint(run_dir)
 
 
 def _required_string(source: Mapping[str, object], key: ConfigKey) -> str:
