@@ -1,0 +1,77 @@
+config_id: ippo_ff
+env_name: simple_spread_v3
+algorithm: ippo
+policy_architecture: ff
+critic_structure: independent
+parameter_sharing: false
+paper_hyperparams_used: true
+paper_hyperparam_deviations:
+  - key: anneal_lr
+    paper_value: true
+    benchmarl_value: false
+    reason: stock BenchMARL PPO optimizer uses fixed lr
+
+benchmarl:
+  algorithm: ippo
+  task: pettingzoo/simple_spread
+  model: layers/mlp
+  critic_model: layers/mlp
+
+paper:
+  total_timesteps: 10000000
+  parallel_envs: 16
+  num_steps: 128
+  fc_hidden_dim: 128
+  gru_hidden_dim: null
+  num_minibatches: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  activation: torch.nn.Tanh
+  learning_rate: 0.001
+  clip_epsilon: 0.1
+  update_epochs: 4
+
+overrides:
+  task.max_cycles: 25
+  experiment.max_n_frames: 10000000
+  experiment.on_policy_n_envs_per_worker: 16
+  experiment.on_policy_collected_frames_per_batch: 2048
+  experiment.on_policy_minibatch_size: 512
+  experiment.on_policy_n_minibatch_iters: 4
+  experiment.gamma: 0.99
+  experiment.lr: 0.001
+  experiment.clip_grad_norm: true
+  experiment.clip_grad_val: 0.5
+  experiment.share_policy_params: false
+  experiment.prefer_continuous_actions: false
+  experiment.evaluation: true
+  experiment.evaluation_episodes: 32
+  experiment.evaluation_interval: 499712
+  experiment.evaluation_deterministic_actions: true
+  experiment.render: false
+  experiment.checkpoint_interval: 0
+  experiment.checkpoint_at_end: true
+  experiment.keep_checkpoints_num: 1
+  experiment.exclude_buffer_from_checkpoint: true
+  experiment.loggers:
+    - csv
+    - wandb
+  experiment.project_name: probing-dec-pomdp-mpe-replication
+  experiment.create_json: true
+  algorithm.share_param_critic: false
+  algorithm.clip_epsilon: 0.1
+  algorithm.entropy_coef: 0.01
+  algorithm.critic_coef: 0.5
+  algorithm.lmbda: 0.95
+  algorithm.loss_critic_type: l2
+  algorithm.minibatch_advantage: false
+  model.num_cells:
+    - 128
+  model.activation_class: torch.nn.Tanh
+  critic_model.num_cells:
+    - 128
+  critic_model.activation_class: torch.nn.Tanh
+

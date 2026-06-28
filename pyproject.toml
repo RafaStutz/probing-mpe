@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "probing_mpe"
+version = "0.1.0"
+description = "Probing Dec-POMDPs in Multi-Agent Particle Environments"
+dependencies = [
+    # Dependencies are currently managed elsewhere, probably in a separate requirements file or conda env
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
