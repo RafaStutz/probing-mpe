@@ -50,6 +50,7 @@ echo "Installing pinned dependencies..."
 pip install "torchrl>=0.10,<0.12"
 pip install "pettingzoo[mpe]>=1.24.3"
 pip install wandb
+pip install python-dotenv
 
 # 6. Verification tests
 echo "Running verification tests..."
