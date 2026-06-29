@@ -15,6 +15,7 @@ DEFAULT_CONFIG_PATH = Path("configs/reduced_mpe/simple_spread_v3/ippo_rnn.yaml")
 DEFAULT_BENCHMARL_ROOT = Path("/tmp/BenchMARL")
 DEFAULT_OUTPUT_DIR = Path("/tmp/probing_mpe_benchmarl_smoke")
 DEFAULT_SEED = 0
+DEFAULT_DEVICE = "cuda:0"
 SMOKE_MAX_FRAMES = 4096
 SMOKE_BATCH_MULTIPLIER = 2
 SMOKE_OPTIMIZER_EPOCHS = 1
@@ -38,6 +39,7 @@ class HydraGroupKey(str, Enum):
 
 
 class OverrideKey(str, Enum):
+    buffer_device = "experiment.buffer_device"
     checkpoint_at_end = "experiment.checkpoint_at_end"
     checkpoint_interval = "experiment.checkpoint_interval"
     create_json = "experiment.create_json"
@@ -52,9 +54,11 @@ class OverrideKey(str, Enum):
     on_policy_n_minibatch_iters = "experiment.on_policy_n_minibatch_iters"
     prefer_continuous_actions = "experiment.prefer_continuous_actions"
     render = "experiment.render"
+    sampling_device = "experiment.sampling_device"
     save_folder = "experiment.save_folder"
     share_param_critic = "algorithm.share_param_critic"
     share_policy_params = "experiment.share_policy_params"
+    train_device = "experiment.train_device"
 
 
 class SmokeBudget:
@@ -106,6 +110,7 @@ def build_command(
     output_dir: Path,
     seed: int,
     python_executable: str,
+    device: str = DEFAULT_DEVICE,
 ) -> list[str]:
     validate_required_overrides(smoke_config)
 
@@ -128,6 +133,7 @@ def build_command(
     )
 
     smoke_overrides = dict(smoke_config.overrides)
+    _apply_device_overrides(smoke_overrides, device)
     smoke_overrides[OverrideKey.max_n_frames.value] = smoke_max_frames
     smoke_overrides[
         OverrideKey.on_policy_n_minibatch_iters.value
@@ -169,6 +175,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmarl-root", type=Path, default=DEFAULT_BENCHMARL_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--device", default=DEFAULT_DEVICE)
     parser.add_argument("--python-executable", default=sys.executable)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -183,6 +190,7 @@ def main() -> int:
         output_dir=args.output_dir,
         seed=args.seed,
         python_executable=args.python_executable,
+        device=args.device,
     )
     print(" ".join(command), flush=True)
     if args.dry_run:
@@ -217,6 +225,12 @@ def _format_hydra_value(value: object) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_format_hydra_value(item) for item in value) + "]"
     return str(value)
+
+
+def _apply_device_overrides(overrides: dict[str, object], device: str) -> None:
+    overrides[OverrideKey.sampling_device.value] = device
+    overrides[OverrideKey.train_device.value] = device
+    overrides[OverrideKey.buffer_device.value] = device
 
 
 if __name__ == "__main__":

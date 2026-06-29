@@ -39,6 +39,7 @@ DEFAULT_CONFIG_PATH = Path("configs/reduced_mpe/simple_spread_v3/ippo_rnn.yaml")
 DEFAULT_BENCHMARL_ROOT = Path("/tmp/BenchMARL")
 DEFAULT_OUTPUT_DIR = Path("runs")
 SUCCESS_RETURN_CODE = 0
+DEFAULT_DEVICE = "cuda:0"
 
 
 class ConfigKey(str, Enum):
@@ -60,13 +61,16 @@ class HydraGroupKey(str, Enum):
 
 
 class OverrideKey(str, Enum):
+    buffer_device = "experiment.buffer_device"
     checkpoint_at_end = "experiment.checkpoint_at_end"
     create_json = "experiment.create_json"
     loggers = "experiment.loggers"
     prefer_continuous_actions = "experiment.prefer_continuous_actions"
+    sampling_device = "experiment.sampling_device"
     save_folder = "experiment.save_folder"
     share_param_critic = "algorithm.share_param_critic"
     share_policy_params = "experiment.share_policy_params"
+    train_device = "experiment.train_device"
 
 
 class FullCellDirectoryName(str, Enum):
@@ -101,6 +105,7 @@ class CliFlag(str, Enum):
     env_name = "--env-name"
     config_id = "--config-id"
     benchmarl_root = "--benchmarl-root"
+    device = "--device"
     seeds = "--seeds"
     python_executable = "--python-executable"
     wandb_mode = "--wandb-mode"
@@ -184,6 +189,7 @@ def build_training_command(
     seed: int,
     python_executable: str,
     wandb_enabled: bool,
+    device: str = DEFAULT_DEVICE,
 ) -> list[str]:
     validate_required_overrides(full_cell_config)
     benchmarl_run = benchmarl_root / "benchmarl" / "run.py"
@@ -198,6 +204,7 @@ def build_training_command(
     ]
 
     overrides = dict(full_cell_config.overrides)
+    _apply_device_overrides(overrides, device)
     overrides[OverrideKey.save_folder.value] = str(run_dir)
     overrides[OverrideKey.checkpoint_at_end.value] = True
     overrides[OverrideKey.create_json.value] = True
@@ -232,6 +239,7 @@ def run_full_cell(
     command_runner: CommandRunner | None = None,
     checkpoint_resolver: CheckpointResolver | None = None,
     force: bool = False,
+    device: str = DEFAULT_DEVICE,
 ) -> list[FullCellOutput]:
     runner = command_runner or run_command
     resolver_is_injected = checkpoint_resolver is not None
@@ -254,6 +262,7 @@ def run_full_cell(
             seed=seed,
             python_executable=python_executable,
             wandb_enabled=wandb_enabled,
+            device=device,
         )
         output = _full_cell_output(
             full_cell_config,
@@ -366,6 +375,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         CliFlag.benchmarl_root.value, type=Path, default=DEFAULT_BENCHMARL_ROOT
     )
+    parser.add_argument(CliFlag.device.value, default=DEFAULT_DEVICE)
     parser.add_argument(CliFlag.seeds.value, nargs="+", type=int, default=list(DEFAULT_SEEDS))
     parser.add_argument(CliFlag.python_executable.value, default=sys.executable)
     parser.add_argument(
@@ -389,6 +399,7 @@ def main() -> int:
         wandb_enabled=args.wandb_mode != WandbMode.disabled.value,
         dry_run=bool(args.dry_run),
         force=bool(args.force),
+        device=args.device,
     )
     print(f"Prepared full-cell artifacts for {len(outputs)} seeds")
     return SUCCESS_RETURN_CODE
@@ -527,6 +538,12 @@ def _resolved_final_checkpoint(
             frame=None,
         )
     return normalize_final_checkpoint(run_dir)
+
+
+def _apply_device_overrides(overrides: dict[str, object], device: str) -> None:
+    overrides[OverrideKey.sampling_device.value] = device
+    overrides[OverrideKey.train_device.value] = device
+    overrides[OverrideKey.buffer_device.value] = device
 
 
 def _run_or_print(

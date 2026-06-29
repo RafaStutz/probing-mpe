@@ -57,6 +57,9 @@ class RunBenchmarlSmokeTests(unittest.TestCase):
         self.assertIn(f"{OverrideKey.share_policy_params.value}=false", command)
         self.assertIn(f"{OverrideKey.share_param_critic.value}=false", command)
         self.assertIn(f"{OverrideKey.prefer_continuous_actions.value}=false", command)
+        self.assertIn(f"{OverrideKey.sampling_device.value}=cuda:0", command)
+        self.assertIn(f"{OverrideKey.train_device.value}=cuda:0", command)
+        self.assertIn(f"{OverrideKey.buffer_device.value}=cuda:0", command)
 
     def test_validate_required_overrides_rejects_parameter_sharing(self) -> None:
         data = yaml.safe_load(CONFIG_PATH.read_text())

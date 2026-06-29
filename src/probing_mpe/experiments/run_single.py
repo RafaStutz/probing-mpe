@@ -20,6 +20,7 @@ from probing_mpe.experiments.run_matrix import (
     CHECKPOINTED_CONFIG_ID,
     DEFAULT_BENCHMARL_ROOT,
     DEFAULT_CONFIG_ROOT,
+    DEFAULT_DEVICE,
     _behavioral_command,
     _checkpointed_diagnostics_command,
     _commands_for_output,
@@ -50,6 +51,7 @@ class CliFlag(str, Enum):
     benchmarl_root = "--benchmarl-root"
     dry_run = "--dry-run"
     force = "--force"
+    device = "--device"
 
 
 class WandbMode(str, Enum):
@@ -97,6 +99,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(CliFlag.dry_run.value, action="store_true")
     parser.add_argument(CliFlag.force.value, action="store_true")
+    parser.add_argument(CliFlag.device.value, default=DEFAULT_DEVICE)
     return parser.parse_args()
 
 
@@ -126,6 +129,7 @@ def main() -> int:
         seed=args.seed,
         python_executable=sys.executable,
         wandb_enabled=wandb_enabled,
+        device=args.device,
     )
     output = _matrix_output(
         matrix_config=matrix_config,

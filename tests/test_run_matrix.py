@@ -60,6 +60,9 @@ class HydraToken(str, Enum):
     no_policy_sharing = "experiment.share_policy_params=false"
     no_critic_sharing = "algorithm.share_param_critic=false"
     discrete_actions = "experiment.prefer_continuous_actions=false"
+    sampling_device = "experiment.sampling_device=cuda:0"
+    train_device = "experiment.train_device=cuda:0"
+    buffer_device = "experiment.buffer_device=cuda:0"
 
 
 class CommandToken(str, Enum):
@@ -114,6 +117,9 @@ class MatrixRunnerTest(unittest.TestCase):
         self.assertIn(HydraToken.no_policy_sharing.value, command)
         self.assertIn(HydraToken.no_critic_sharing.value, command)
         self.assertIn(HydraToken.discrete_actions.value, command)
+        self.assertIn(HydraToken.sampling_device.value, command)
+        self.assertIn(HydraToken.train_device.value, command)
+        self.assertIn(HydraToken.buffer_device.value, command)
 
     def test_run_matrix_runs_all_final_artifacts_and_checkpointed_mappo_rnn(self) -> None:
         commands: list[list[str]] = []
