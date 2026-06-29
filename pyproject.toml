@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Probing Dec-POMDPs in Multi-Agent Particle Environments"
 requires-python = ">=3.11"
 dependencies = [
+    "dec-pomdp-diagnostics @ git+https://github.com/KaleabTessera/probing-dec-pomdps.git@c8881e8dc41258727ddf814c9348f6bbc0177a56",
     "numpy",
     "PyYAML",
     "python-dotenv",

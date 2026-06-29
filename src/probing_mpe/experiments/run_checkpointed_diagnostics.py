@@ -23,7 +23,7 @@ from probing_mpe.evaluation import (
     compute_diagnostics_for_trajectory,
     write_diagnostic_outputs,
 )
-from probing_mpe.experiments.artifacts import progress_checkpoint
+from probing_mpe.experiments.artifacts import progress_checkpoint, reloadable_checkpoint_path
 from probing_mpe.trajectories import (
     TARGET_DIAGNOSTIC_TRANSITIONS,
     export_trajectory_from_checkpoint,
@@ -178,6 +178,7 @@ def run_checkpointed_diagnostics(
         checkpoint_path = checkpoint_paths.get(progress) or discover_progress_checkpoint(
             run_dir, progress
         )
+        checkpoint_path = reloadable_checkpoint_path(run_dir, checkpoint_path)
         paths = build_progress_artifact_paths(
             run_dir=run_dir,
             progress=progress,

@@ -24,9 +24,11 @@ from probing_mpe.experiments.artifacts import (
     normalize_final_checkpoint,
     null_diagnostics_are_valid,
     progress_checkpoints,
+    reloadable_checkpoint_path,
     run_artifact_paths,
     run_is_complete,
     trajectory_is_valid,
+    training_checkpoint_exists,
     write_run_metadata,
 )
 
@@ -300,11 +302,16 @@ def run_full_cell(
             include_progress=False,
         )
 
-        if force or dry_run or not artifact_paths.checkpoint_path.exists():
+        if force or dry_run or not training_checkpoint_exists(run_dir):
             _run_or_print(training_command, benchmarl_root, dry_run, runner)
 
         checkpoint_path = (
             artifact_paths.checkpoint_path if dry_run else resolver(run_dir)
+        )
+        export_checkpoint_path = (
+            checkpoint_path
+            if dry_run
+            else reloadable_checkpoint_path(run_dir, checkpoint_path)
         )
         final_checkpoint = (
             NormalizedCheckpoint(
@@ -319,7 +326,7 @@ def run_full_cell(
                 allow_missing=resolver_is_injected,
             )
         )
-        output = _full_cell_output(full_cell_config, seed, run_dir, checkpoint_path)
+        output = _full_cell_output(full_cell_config, seed, run_dir, export_checkpoint_path)
         commands = _commands_for_output(output, training_command, python_executable)
         _write_metadata_for_output(
             artifact_paths=artifact_paths,

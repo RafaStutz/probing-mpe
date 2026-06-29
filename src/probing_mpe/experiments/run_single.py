@@ -12,9 +12,11 @@ from probing_mpe.experiments.artifacts import (
     checkpointed_artifacts_are_valid,
     diagnostics_are_valid,
     null_diagnostics_are_valid,
+    reloadable_checkpoint_path,
     run_artifact_paths,
     run_is_complete,
     trajectory_is_valid,
+    training_checkpoint_exists,
 )
 from probing_mpe.experiments.run_matrix import (
     CHECKPOINTED_CONFIG_ID,
@@ -176,7 +178,7 @@ def main() -> int:
         include_progress=False,
     )
 
-    if args.force or args.dry_run or not artifact_paths.checkpoint_path.exists():
+    if args.force or args.dry_run or not training_checkpoint_exists(run_dir):
         print(f"Starting training run for {args.env} / {args.config} / seed {args.seed}...")
         _run_or_print(training_command, args.benchmarl_root, args.dry_run, run_command)
 
@@ -185,11 +187,16 @@ def main() -> int:
         if args.dry_run
         else discover_final_checkpoint(run_dir)
     )
+    export_checkpoint_path = (
+        checkpoint_path
+        if args.dry_run
+        else reloadable_checkpoint_path(run_dir, checkpoint_path)
+    )
     output = _matrix_output(
         matrix_config=matrix_config,
         seed=args.seed,
         run_dir=run_dir,
-        checkpoint_path=checkpoint_path,
+        checkpoint_path=export_checkpoint_path,
     )
     commands = _commands_for_output(
         output=output,
@@ -198,7 +205,7 @@ def main() -> int:
         checkpointed_required=checkpointed_required,
     )
     final_checkpoint = NormalizedCheckpoint(
-        source_path=checkpoint_path,
+        source_path=export_checkpoint_path,
         normalized_path=checkpoint_path,
         frame=None,
     )

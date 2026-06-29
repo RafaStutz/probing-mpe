@@ -41,6 +41,8 @@ CHECKPOINTED_COMMANDS_PER_RUN = 1
 SINGLE_SEED = (0,)
 SINGLE_SEED_MATRIX_RUNS = 8
 SINGLE_SEED_CHECKPOINTED_RUN_COUNT = 2
+BENCHMARL_EXPERIMENT_DIR = "benchmarl_experiment"
+FINAL_FRAME = 10_000_000
 EXPECTED_MATRIX_COMMANDS = (
     EXPECTED_MATRIX_RUNS * COMMANDS_PER_STANDARD_RUN
     + CHECKPOINTED_RUN_COUNT * CHECKPOINTED_COMMANDS_PER_RUN
@@ -257,6 +259,80 @@ class MatrixRunnerTest(unittest.TestCase):
             SINGLE_SEED_CHECKPOINTED_RUN_COUNT,
         )
 
+    def test_run_matrix_exports_from_original_benchmarl_checkpoint_after_normalization(self) -> None:
+        commands: list[list[str]] = []
+
+        def run_command(command: list[str], cwd: Path | None) -> int:
+            commands.append(command)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            raw_checkpoints = _write_reloadable_matrix_checkpoints(output_dir)
+
+            run_matrix(
+                output_dir=output_dir,
+                config_root=DEFAULT_CONFIG_ROOT,
+                benchmarl_root=BENCHMARL_ROOT,
+                seeds=SINGLE_SEED,
+                python_executable=PYTHON_EXECUTABLE,
+                wandb_enabled=False,
+                dry_run=False,
+                command_runner=run_command,
+                force=False,
+            )
+
+        export_commands = [
+            command
+            for command in commands
+            if CommandToken.export_script.value in command
+        ]
+        exported_checkpoints = {
+            Path(command[command.index("--checkpoint") + 1])
+            for command in export_commands
+        }
+        self.assertTrue(raw_checkpoints.issubset(exported_checkpoints))
+
+    def test_run_matrix_resumes_from_raw_benchmarl_checkpoint_without_retraining(self) -> None:
+        commands: list[list[str]] = []
+
+        def run_command(command: list[str], cwd: Path | None) -> int:
+            commands.append(command)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            raw_checkpoints = _write_raw_matrix_checkpoints(output_dir)
+
+            run_matrix(
+                output_dir=output_dir,
+                config_root=DEFAULT_CONFIG_ROOT,
+                benchmarl_root=BENCHMARL_ROOT,
+                seeds=SINGLE_SEED,
+                python_executable=PYTHON_EXECUTABLE,
+                wandb_enabled=False,
+                dry_run=False,
+                command_runner=run_command,
+                force=False,
+            )
+
+        training_commands = [
+            command
+            for command in commands
+            if command[1].endswith(CommandToken.training_script.value)
+        ]
+        export_commands = [
+            command
+            for command in commands
+            if CommandToken.export_script.value in command
+        ]
+        exported_checkpoints = {
+            Path(command[command.index("--checkpoint") + 1])
+            for command in export_commands
+        }
+        self.assertEqual(training_commands, [])
+        self.assertTrue(raw_checkpoints.issubset(exported_checkpoints))
+
     def test_run_matrix_force_ignores_complete_resume_state(self) -> None:
         commands: list[list[str]] = []
 
@@ -330,6 +406,60 @@ def _write_matrix_checkpoints(output_dir: Path) -> None:
         )
         paths.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         paths.checkpoint_path.write_text(CHECKPOINT_CONTENT, encoding="utf-8")
+
+
+def _write_reloadable_matrix_checkpoints(output_dir: Path) -> set[Path]:
+    raw_checkpoints: set[Path] = set()
+    for plan_entry in build_matrix_plan(DEFAULT_CONFIG_ROOT, SINGLE_SEED):
+        paths = run_artifact_paths(
+            env_name=plan_entry.env_name.value,
+            config_id=plan_entry.config_id.value,
+            seed=plan_entry.seed,
+            run_dir=(
+                output_dir
+                / plan_entry.env_name.value
+                / plan_entry.config_id.value
+                / "seed_0"
+            ),
+        )
+        raw_checkpoint = (
+            paths.run_dir
+            / BENCHMARL_EXPERIMENT_DIR
+            / DirectoryName.checkpoints.value
+            / f"checkpoint_{FINAL_FRAME}.pt"
+        )
+        raw_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        raw_checkpoint.write_text(CHECKPOINT_CONTENT, encoding="utf-8")
+        paths.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.checkpoint_path.write_text(CHECKPOINT_CONTENT, encoding="utf-8")
+        raw_checkpoints.add(raw_checkpoint)
+    return raw_checkpoints
+
+
+def _write_raw_matrix_checkpoints(output_dir: Path) -> set[Path]:
+    raw_checkpoints: set[Path] = set()
+    for plan_entry in build_matrix_plan(DEFAULT_CONFIG_ROOT, SINGLE_SEED):
+        paths = run_artifact_paths(
+            env_name=plan_entry.env_name.value,
+            config_id=plan_entry.config_id.value,
+            seed=plan_entry.seed,
+            run_dir=(
+                output_dir
+                / plan_entry.env_name.value
+                / plan_entry.config_id.value
+                / "seed_0"
+            ),
+        )
+        raw_checkpoint = (
+            paths.run_dir
+            / BENCHMARL_EXPERIMENT_DIR
+            / DirectoryName.checkpoints.value
+            / f"checkpoint_{FINAL_FRAME}.pt"
+        )
+        raw_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        raw_checkpoint.write_text(CHECKPOINT_CONTENT, encoding="utf-8")
+        raw_checkpoints.add(raw_checkpoint)
+    return raw_checkpoints
 
 
 def _write_valid_final_artifacts(paths: object) -> None:

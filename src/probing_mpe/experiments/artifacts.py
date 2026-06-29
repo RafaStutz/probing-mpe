@@ -202,12 +202,13 @@ def checkpoint_frame(checkpoint_path: Path) -> int | None:
 
 
 def numbered_checkpoints(run_dir: Path) -> list[CheckpointCandidate]:
-    checkpoint_root = run_dir / DirectoryName.checkpoints.value
-    if not checkpoint_root.exists():
+    if not run_dir.exists():
         return []
     candidates: list[CheckpointCandidate] = []
     for checkpoint_path in sorted(
-        checkpoint_root.rglob(ArtifactFileName.checkpoint_glob.value)
+        run_dir.glob(
+            f"**/{DirectoryName.checkpoints.value}/{ArtifactFileName.checkpoint_glob.value}"
+        )
     ):
         frame = checkpoint_frame(checkpoint_path)
         if frame is not None:
@@ -219,7 +220,7 @@ def normalize_final_checkpoint(run_dir: Path) -> NormalizedCheckpoint:
     normalized_path = default_final_checkpoint(run_dir)
     if normalized_path.exists():
         return NormalizedCheckpoint(
-            source_path=normalized_path,
+            source_path=reloadable_checkpoint_path(run_dir, normalized_path),
             normalized_path=normalized_path,
             frame=_largest_numbered_frame(run_dir),
         )
@@ -235,6 +236,19 @@ def normalize_final_checkpoint(run_dir: Path) -> NormalizedCheckpoint:
         normalized_path=normalized_path,
         frame=selected.frame,
     )
+
+
+def reloadable_checkpoint_path(run_dir: Path, checkpoint_path: Path) -> Path:
+    if checkpoint_path != default_final_checkpoint(run_dir):
+        return checkpoint_path
+    checkpoints = numbered_checkpoints(run_dir)
+    if not checkpoints:
+        return checkpoint_path
+    return checkpoints[-1].path
+
+
+def training_checkpoint_exists(run_dir: Path) -> bool:
+    return default_final_checkpoint(run_dir).exists() or bool(numbered_checkpoints(run_dir))
 
 
 def progress_checkpoints(run_dir: Path) -> list[CheckpointProgress]:

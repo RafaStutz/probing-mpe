@@ -38,12 +38,10 @@ PROBING_DIR="$BASE_DIR/probing-dec-pomdps"
 if [ ! -d "$PROBING_DIR" ]; then
     echo "Cloning probing-dec-pomdps into $PROBING_DIR..."
     git clone https://github.com/KaleabTessera/probing-dec-pomdps.git "$PROBING_DIR"
-    cd "$PROBING_DIR"
-    pip install -e .
-    cd - > /dev/null
 else
     echo "probing-dec-pomdps already cloned at $PROBING_DIR."
 fi
+pip install -e "$PROBING_DIR"
 
 # 5. Install pinned dependencies (TorchRL, PettingZoo/MPE, WandB)
 echo "Installing pinned dependencies..."
@@ -63,6 +61,14 @@ try:
     print('[OK] Environments simple_spread_v3 and simple_speaker_listener_v4 can be imported.')
 except Exception as e:
     print(f'[ERROR] Failed to import MPE environments: {e}')
+    sys.exit(1)
+
+print('Checking dec_pomdp_diagnostics backend...')
+try:
+    import dec_pomdp_diagnostics
+    print(f'[OK] dec_pomdp_diagnostics imported from {dec_pomdp_diagnostics.__file__}.')
+except Exception as e:
+    print(f'[ERROR] Failed to import dec_pomdp_diagnostics: {e}')
     sys.exit(1)
 
 print('Checking BenchMARL configs and parameter sharing...')

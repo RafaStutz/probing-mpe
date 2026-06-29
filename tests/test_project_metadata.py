@@ -7,7 +7,13 @@ from pathlib import Path
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH: Path = PROJECT_ROOT / "pyproject.toml"
-RUNTIME_DEPENDENCIES: set[str] = {"numpy", "PyYAML", "python-dotenv", "wandb"}
+RUNTIME_DEPENDENCIES: set[str] = {
+    "dec-pomdp-diagnostics",
+    "numpy",
+    "PyYAML",
+    "python-dotenv",
+    "wandb",
+}
 DEV_DEPENDENCIES: set[str] = {"pytest"}
 DEPENDENCY_NAME_MAX_SPLIT = 1
 

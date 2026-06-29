@@ -20,7 +20,9 @@ from probing_mpe.experiments.artifacts import (
     final_artifacts_are_valid,
     normalize_final_checkpoint,
     progress_checkpoints,
+    reloadable_checkpoint_path,
     run_is_complete,
+    training_checkpoint_exists,
     write_run_metadata,
 )
 from probing_mpe.evaluation import DiagnosticJsonKey
@@ -92,6 +94,24 @@ class RunArtifactsTest(unittest.TestCase):
                 / DirectoryName.checkpoint_final.value
                 / ArtifactFileName.checkpoint.value,
             )
+
+    def test_reloadable_checkpoint_path_uses_original_benchmarl_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            experiment_dir = run_dir / "benchmarl_experiment"
+            checkpoints_dir = experiment_dir / DirectoryName.checkpoints.value
+            checkpoints_dir.mkdir(parents=True)
+            source_checkpoint = checkpoints_dir / f"checkpoint_{FINAL_FRAME}.pt"
+            source_checkpoint.write_text(CHECKPOINT_CONTENT_HIGH, encoding="utf-8")
+            normalized = normalize_final_checkpoint(run_dir)
+
+            reloadable = reloadable_checkpoint_path(
+                run_dir,
+                normalized.normalized_path,
+            )
+
+            self.assertEqual(reloadable, source_checkpoint)
+            self.assertTrue(training_checkpoint_exists(run_dir))
 
     def test_final_artifacts_are_valid_and_run_metadata_is_written(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
