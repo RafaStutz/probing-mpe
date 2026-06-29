@@ -49,6 +49,42 @@ class RenderVideoTest(unittest.TestCase):
         self.assertEqual(written_paths, [output_path])
         self.assertEqual(written_fps, [7])
 
+    def test_render_checkpoint_video_uses_reloadable_checkpoint_for_normalized_final_checkpoint(
+        self,
+    ) -> None:
+        loaded_checkpoints: list[Path] = []
+
+        def reload_experiment(
+            checkpoint_path: Path,
+            experiment_patch: Mapping[str, object],
+        ) -> object:
+            loaded_checkpoints.append(checkpoint_path)
+            return _reload_experiment(checkpoint_path, experiment_patch)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            normalized_checkpoint = run_dir / "checkpoint_final" / "checkpoint.pt"
+            raw_checkpoint = (
+                run_dir / "mappo_experiment" / "checkpoints" / "checkpoint_100.pt"
+            )
+            older_raw_checkpoint = (
+                run_dir / "mappo_experiment" / "checkpoints" / "checkpoint_50.pt"
+            )
+            normalized_checkpoint.parent.mkdir(parents=True)
+            raw_checkpoint.parent.mkdir(parents=True)
+            normalized_checkpoint.write_bytes(b"checkpoint")
+            raw_checkpoint.write_bytes(b"checkpoint")
+            older_raw_checkpoint.write_bytes(b"checkpoint")
+
+            render_checkpoint_video(
+                checkpoint_path=normalized_checkpoint,
+                output_path=run_dir / "policy.gif",
+                reload_experiment=reload_experiment,
+                video_writer=_ignore_video,
+            )
+
+        self.assertEqual(loaded_checkpoints, [raw_checkpoint])
+
     def test_render_checkpoint_video_fails_when_environment_returns_no_frames(self) -> None:
         def reload_experiment(
             checkpoint_path: Path,
@@ -120,6 +156,10 @@ def _reload_experiment(
         np.ones((3, 3, 4), dtype=np.uint8),
     ]
     return FakeExperiment(env=FakeEnv(frames=frames))
+
+
+def _ignore_video(frames: Sequence[np.ndarray], output_path: Path, fps: int) -> None:
+    return None
 
 
 if __name__ == "__main__":

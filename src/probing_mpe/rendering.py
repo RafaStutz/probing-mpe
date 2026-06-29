@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from probing_mpe.experiments.artifacts import reloadable_checkpoint_path
+
 
 DEFAULT_EPISODES = 1
 DEFAULT_FPS = 10
@@ -24,6 +26,10 @@ class RenderPatchKey(str, Enum):
     sampling_device = "sampling_device"
     train_device = "train_device"
     buffer_device = "buffer_device"
+
+
+class DirectoryName(str, Enum):
+    checkpoint_final = "checkpoint_final"
 
 
 class TensorKey(str, Enum):
@@ -137,6 +143,7 @@ def _load_experiment(
     episodes: int,
     reload_experiment: ReloadExperiment | None,
 ) -> object:
+    resolved_checkpoint_path = _reloadable_render_checkpoint_path(checkpoint_path)
     experiment_patch: dict[str, object] = {
         RenderPatchKey.evaluation_episodes.value: episodes,
         RenderPatchKey.render.value: True,
@@ -146,13 +153,22 @@ def _load_experiment(
         RenderPatchKey.buffer_device.value: "cpu",
     }
     if reload_experiment is not None:
-        return reload_experiment(checkpoint_path, experiment_patch)
+        return reload_experiment(resolved_checkpoint_path, experiment_patch)
 
     from benchmarl.experiment import Experiment
 
     return Experiment.reload_from_file(
-        str(checkpoint_path),
+        str(resolved_checkpoint_path),
         experiment_patch=experiment_patch,
+    )
+
+
+def _reloadable_render_checkpoint_path(checkpoint_path: Path) -> Path:
+    if checkpoint_path.parent.name != DirectoryName.checkpoint_final.value:
+        return checkpoint_path
+    return reloadable_checkpoint_path(
+        run_dir=checkpoint_path.parent.parent,
+        checkpoint_path=checkpoint_path,
     )
 
 
