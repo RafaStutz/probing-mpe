@@ -12,6 +12,7 @@ import numpy as np
 from probing_mpe.evaluation import DiagnosticJsonKey
 from probing_mpe.experiments.artifacts import (
     ArtifactFileName,
+    CheckpointMetadataKey,
     DirectoryName,
     MetadataKey,
     run_artifact_paths,
@@ -281,6 +282,17 @@ class MatrixRunnerTest(unittest.TestCase):
                 command_runner=run_command,
                 force=False,
             )
+            metadata_path = (
+                output_dir
+                / MatrixEnvName.simple_spread.value
+                / MatrixConfigId.ippo_ff.value
+                / "seed_0"
+                / ArtifactFileName.run_metadata.value
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata_frame = metadata[MetadataKey.final_checkpoint.value][
+                CheckpointMetadataKey.frame.value
+            ]
 
         export_commands = [
             command
@@ -292,6 +304,7 @@ class MatrixRunnerTest(unittest.TestCase):
             for command in export_commands
         }
         self.assertTrue(raw_checkpoints.issubset(exported_checkpoints))
+        self.assertEqual(metadata_frame, FINAL_FRAME)
 
     def test_run_matrix_resumes_from_raw_benchmarl_checkpoint_without_retraining(self) -> None:
         commands: list[list[str]] = []

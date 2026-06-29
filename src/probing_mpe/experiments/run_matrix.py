@@ -18,6 +18,7 @@ from probing_mpe.experiments.artifacts import (
     RunArtifactPaths,
     base_run_metadata,
     behavioral_metrics_are_valid,
+    checkpoint_frame,
     checkpointed_artifacts_are_valid,
     default_final_checkpoint,
     diagnostics_are_valid,
@@ -336,11 +337,7 @@ def run_matrix(
                 python_executable=python_executable,
                 wandb_enabled=wandb_enabled,
                 commands=commands,
-                final_checkpoint=NormalizedCheckpoint(
-                    source_path=artifact_paths.checkpoint_path,
-                    normalized_path=artifact_paths.checkpoint_path,
-                    frame=None,
-                ),
+                final_checkpoint=normalize_final_checkpoint(run_dir),
                 include_progress=checkpointed_required,
             )
             outputs.append(output)
@@ -649,13 +646,15 @@ def _resolved_final_checkpoint(
         return NormalizedCheckpoint(
             source_path=checkpoint_path,
             normalized_path=normalized_path,
-            frame=None,
+            frame=checkpoint_frame(checkpoint_path),
         )
+    if checkpoint_path.exists() and checkpoint_path == normalized_path:
+        return normalize_final_checkpoint(run_dir)
     if checkpoint_path.exists():
         return NormalizedCheckpoint(
             source_path=checkpoint_path,
             normalized_path=checkpoint_path,
-            frame=None,
+            frame=checkpoint_frame(checkpoint_path),
         )
     if allow_missing:
         return NormalizedCheckpoint(

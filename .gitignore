@@ -219,4 +219,8 @@ __marimo__/
 
 # Replication specific
 /docs
+/plots_local_check
+/plots_local_matrix
+/results_from_pods
+/results_local_matrix
 AGENTS.md

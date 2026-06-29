@@ -24,6 +24,11 @@ class TestValue(float, Enum):
     behavioral_base = 0.2
 
 
+READABLE_PLOT_MINIMUM_BYTES = 10_000
+LEARNING_CURVE_LAST_STEP = 2
+LEARNING_CURVE_LAST_VALUE = 12.0
+
+
 class MakePlotsTest(unittest.TestCase):
     def test_build_analysis_outputs_writes_summary_and_required_pngs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -42,9 +47,27 @@ class MakePlotsTest(unittest.TestCase):
                 ]["HARnorm"],
                 "3/3",
             )
+            self.assertAlmostEqual(
+                summary[SummaryKey.final_diagnostics_margin_above_null.value][
+                    "simple_spread_v3/ippo_ff"
+                ]["HARnorm"],
+                0.15,
+            )
             self.assertIn(
                 "simple_speaker_listener_v4/MAPPO",
                 summary[SummaryKey.memory_gap.value],
+            )
+            self.assertEqual(
+                summary[SummaryKey.learning_curves.value][
+                    "simple_spread_v3/ippo_ff/seed_0"
+                ][-1]["step"],
+                LEARNING_CURVE_LAST_STEP,
+            )
+            self.assertEqual(
+                summary[SummaryKey.learning_curves.value][
+                    "simple_spread_v3/ippo_ff/seed_0"
+                ][-1]["value"],
+                LEARNING_CURVE_LAST_VALUE,
             )
 
             summary_path = plots_dir / SUMMARY_FILE_NAME
@@ -58,6 +81,11 @@ class MakePlotsTest(unittest.TestCase):
                 self.assertEqual(
                     plot_path.read_bytes()[: len(PNG_SIGNATURE)],
                     PNG_SIGNATURE,
+                )
+                self.assertGreater(
+                    plot_path.stat().st_size,
+                    READABLE_PLOT_MINIMUM_BYTES,
+                    plot_name,
                 )
 
     def test_build_analysis_outputs_handles_missing_artifacts(self) -> None:
@@ -139,6 +167,12 @@ def _write_final_artifacts(
     )
     (run_dir / "behavioral_metrics_final.json").write_text(
         json.dumps(behavioral_metrics),
+        encoding="utf-8",
+    )
+    scalar_dir = run_dir / f"{config_id}_experiment" / f"{config_id}_experiment" / "scalars"
+    scalar_dir.mkdir(parents=True)
+    (scalar_dir / "eval_reward_episode_reward_mean.csv").write_text(
+        "0,10.0\n1,11.0\n2,12.0\n",
         encoding="utf-8",
     )
 

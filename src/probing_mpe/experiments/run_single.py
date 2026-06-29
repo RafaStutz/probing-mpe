@@ -9,8 +9,10 @@ from probing_mpe.experiments.artifacts import (
     MetadataStatus,
     NormalizedCheckpoint,
     behavioral_metrics_are_valid,
+    checkpoint_frame,
     checkpointed_artifacts_are_valid,
     diagnostics_are_valid,
+    normalize_final_checkpoint,
     null_diagnostics_are_valid,
     reloadable_checkpoint_path,
     run_artifact_paths,
@@ -157,11 +159,7 @@ def main() -> int:
             python_executable=sys.executable,
             wandb_enabled=wandb_enabled,
             commands=commands,
-            final_checkpoint=NormalizedCheckpoint(
-                source_path=artifact_paths.checkpoint_path,
-                normalized_path=artifact_paths.checkpoint_path,
-                frame=None,
-            ),
+            final_checkpoint=normalize_final_checkpoint(run_dir),
             include_progress=checkpointed_required,
         )
         print(f"Run single already complete. Results in {run_dir}")
@@ -207,7 +205,7 @@ def main() -> int:
     final_checkpoint = NormalizedCheckpoint(
         source_path=export_checkpoint_path,
         normalized_path=checkpoint_path,
-        frame=None,
+        frame=checkpoint_frame(export_checkpoint_path),
     )
     _write_metadata_for_output(
         artifact_paths=artifact_paths,

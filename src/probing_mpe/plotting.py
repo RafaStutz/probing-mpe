@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import argparse
 import binascii
+import csv
 import json
 import math
+import os
 import struct
 import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "probing_mpe_matplotlib"))
+
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.patches import Patch
 
 
 DEFAULT_RUNS_DIR = Path("runs")
@@ -23,6 +36,8 @@ DIAGNOSTIC_EVOLUTION_PLOT_NAME = "diagnostic_evolution_mappo_rnn.png"
 FINAL_DIAGNOSTIC_PLOT_NAME = "final_diagnostics_above_null.png"
 BEHAVIORAL_SPREAD_PLOT_NAME = "behavioral_metrics_simple_spread.png"
 BEHAVIORAL_SPEAKER_LISTENER_PLOT_NAME = "behavioral_metrics_speaker_listener.png"
+EVAL_RETURN_SCALAR_FILE_NAME = "eval_reward_episode_reward_mean.csv"
+SCALARS_DIRECTORY_NAME = "scalars"
 REQUIRED_PLOT_NAMES = (
     LEARNING_CURVES_PLOT_NAME,
     MEMORY_GAP_PLOT_NAME,
@@ -57,6 +72,17 @@ LINE_WIDTH = 2
 POINT_SIZE = 4
 MINIMUM_PLOT_RANGE = 1.0
 DEFAULT_EMPTY_MAX = 1.0
+PLOT_FIGURE_WIDTH = 11.0
+PLOT_FIGURE_HEIGHT = 6.4
+PLOT_DPI = 140
+BAR_VALUE_PADDING_RATIO = 0.02
+TICK_LABEL_ROTATION_DEGREES = 35
+TICK_LABEL_FONT_SIZE = 8
+ANNOTATION_FONT_SIZE = 7
+TITLE_FONT_SIZE = 13
+AXIS_LABEL_FONT_SIZE = 10
+GRID_ALPHA = 0.28
+NAN_BAR_ALPHA = 0.35
 
 
 class EnvName(str, Enum):
@@ -96,11 +122,50 @@ class BehavioralMetricName(str, Enum):
     wrong_landmark_rate = "eval/wrong_landmark_rate"
 
 
+class PlotTitle(str, Enum):
+    final_returns = "Final evaluation return"
+    memory_gap = "Memory benefit: RNN return minus FF return"
+    diagnostic_evolution = "MAPPO-RNN diagnostic evolution by checkpoint"
+    above_null = "Final diagnostic margin above permutation null"
+    behavioral_spread = "Simple Spread behavioral metrics"
+    behavioral_speaker_listener = "Simple Speaker Listener behavioral metrics"
+
+
+class AxisLabel(str, Enum):
+    run_config = "Run configuration"
+    algorithm_pair = "Environment / algorithm"
+    progress = "Training progress"
+    diagnostic_fraction = "Fraction above null"
+    diagnostic_margin = "Diagnostic minus null"
+    return_mean = "Mean return"
+    return_delta = "Return delta"
+    diagnostic_value = "Mean normalized diagnostic"
+    behavioral_value = "Metric value"
+    training_step = "BenchMARL evaluation step"
+
+
+class DisplayLabel(str, Enum):
+    simple_spread = "Spread"
+    simple_speaker_listener = "Speaker/listener"
+    ippo_ff = "IPPO FF"
+    ippo_rnn = "IPPO RNN"
+    mappo_ff = "MAPPO FF"
+    mappo_rnn = "MAPPO RNN"
+    coverage_success_rate = "Coverage success"
+    final_landmark_distance_mean = "Landmark distance"
+    collision_rate = "Collision rate"
+    target_success_rate = "Target success"
+    final_target_distance_mean = "Target distance"
+    wrong_landmark_rate = "Wrong landmark"
+
+
 class JsonKey(str, Enum):
     metadata = "metadata"
     diagnostics = "diagnostics"
     null_diagnostics = "null_diagnostics"
     behavioral_metrics = "behavioral_metrics"
+    final_checkpoint = "final_checkpoint"
+    source_path = "source_path"
     env_name = "env_name"
     config_id = "config_id"
     seed = "seed"
@@ -114,7 +179,9 @@ class SummaryKey(str, Enum):
     missing_artifacts = "missing_artifacts"
     per_run_metrics = "per_run_metrics"
     memory_gap = "memory_gap"
+    learning_curves = "learning_curves"
     final_diagnostics_above_null = "final_diagnostics_above_null"
+    final_diagnostics_margin_above_null = "final_diagnostics_margin_above_null"
     diagnostic_evolution = "diagnostic_evolution"
     scenario_verdict = "scenario_verdict"
 
@@ -142,6 +209,12 @@ class RunMetricKey(str, Enum):
     above_null = "above_null"
     behavioral_metrics = "behavioral_metrics"
     return_metrics = "return_metrics"
+    learning_curve = "learning_curve"
+
+
+class LearningCurveKey(str, Enum):
+    step = "step"
+    value = "value"
 
 
 class PngChunkType(bytes, Enum):
@@ -154,6 +227,7 @@ class ArtifactFileName(str, Enum):
     diagnostics_final = "diagnostics_final.json"
     diagnostics_null_final = "diagnostics_null_final.json"
     behavioral_metrics_final = "behavioral_metrics_final.json"
+    run_metadata = "run_metadata.json"
 
 
 class DirectoryName(str, Enum):
@@ -196,6 +270,7 @@ class RunMetrics:
     null_diagnostics: dict[str, float]
     above_null: dict[str, bool]
     behavioral_metrics: dict[str, float]
+    learning_curve: list[tuple[int, float]]
 
 
 @dataclass
@@ -209,7 +284,9 @@ def build_analysis_outputs(runs_dir: Path, plots_dir: Path) -> dict[str, object]
     plots_dir.mkdir(parents=True, exist_ok=True)
     run_metrics, missing_artifacts = load_run_metrics(runs_dir)
     memory_gap = compute_memory_gap(run_metrics)
+    learning_curves = compute_learning_curves(run_metrics)
     final_above_null = compute_final_diagnostics_above_null(run_metrics)
+    final_margin_above_null = compute_final_diagnostics_margin_above_null(run_metrics)
     diagnostic_evolution = load_diagnostic_evolution(runs_dir)
     scenario_verdict = compute_scenario_verdict(final_above_null, memory_gap)
 
@@ -220,7 +297,9 @@ def build_analysis_outputs(runs_dir: Path, plots_dir: Path) -> dict[str, object]
             _run_metrics_to_jsonable(metrics) for metrics in run_metrics
         ],
         SummaryKey.memory_gap.value: memory_gap,
+        SummaryKey.learning_curves.value: learning_curves,
         SummaryKey.final_diagnostics_above_null.value: final_above_null,
+        SummaryKey.final_diagnostics_margin_above_null.value: final_margin_above_null,
         SummaryKey.diagnostic_evolution.value: diagnostic_evolution,
         SummaryKey.scenario_verdict.value: scenario_verdict,
     }
@@ -234,7 +313,7 @@ def build_analysis_outputs(runs_dir: Path, plots_dir: Path) -> dict[str, object]
         plots_dir=plots_dir,
         run_metrics=run_metrics,
         memory_gap=memory_gap,
-        final_above_null=final_above_null,
+        final_margin_above_null=final_margin_above_null,
         diagnostic_evolution=diagnostic_evolution,
     )
     return summary
@@ -276,6 +355,7 @@ def load_run_metrics(runs_dir: Path) -> tuple[list[RunMetrics], list[str]]:
                     for metric_name, value in diagnostics.items()
                 },
                 behavioral_metrics=_behavioral_values(behavioral_json),
+                learning_curve=_load_learning_curve(run_artifacts.run_dir),
             )
         )
     return run_metrics, missing_artifacts
@@ -328,6 +408,21 @@ def compute_memory_gap(run_metrics: Sequence[RunMetrics]) -> dict[str, dict[str,
     return output
 
 
+def compute_learning_curves(
+    run_metrics: Sequence[RunMetrics],
+) -> dict[str, list[dict[str, float | int]]]:
+    return {
+        _run_key(metrics): [
+            {
+                LearningCurveKey.step.value: step,
+                LearningCurveKey.value.value: value,
+            }
+            for step, value in metrics.learning_curve
+        ]
+        for metrics in run_metrics
+    }
+
+
 def compute_final_diagnostics_above_null(
     run_metrics: Sequence[RunMetrics],
 ) -> dict[str, dict[str, str]]:
@@ -348,6 +443,43 @@ def compute_final_diagnostics_above_null(
                         for metrics in matching
                     ],
                     len(matching),
+                )
+                for label in (
+                    DiagnosticLabel.HAR,
+                    DiagnosticLabel.PIF,
+                    DiagnosticLabel.AA,
+                    DiagnosticLabel.DAI,
+                )
+            }
+    return output
+
+
+def compute_final_diagnostics_margin_above_null(
+    run_metrics: Sequence[RunMetrics],
+) -> dict[str, dict[str, float]]:
+    output: dict[str, dict[str, float]] = {}
+    for env_name in sorted({metrics.env_name for metrics in run_metrics}):
+        for config_id in [config.value for config in ConfigId]:
+            matching = [
+                metrics
+                for metrics in run_metrics
+                if metrics.env_name == env_name and metrics.config_id == config_id
+            ]
+            if not matching:
+                continue
+            output[f"{env_name}{CONFIG_SEPARATOR}{config_id}"] = {
+                _normalized_metric_name(label.value): _mean(
+                    [
+                        metrics.diagnostics.get(
+                            _normalized_metric_name(label.value),
+                            math.nan,
+                        )
+                        - metrics.null_diagnostics.get(
+                            _normalized_metric_name(label.value),
+                            math.nan,
+                        )
+                        for metrics in matching
+                    ]
                 )
                 for label in (
                     DiagnosticLabel.HAR,
@@ -415,16 +547,16 @@ def write_required_plots(
     plots_dir: Path,
     run_metrics: Sequence[RunMetrics],
     memory_gap: Mapping[str, Mapping[str, object]],
-    final_above_null: Mapping[str, Mapping[str, str]],
+    final_margin_above_null: Mapping[str, Mapping[str, float]],
     diagnostic_evolution: Mapping[str, Mapping[str, Sequence[float]]],
 ) -> None:
-    _plot_final_returns(run_metrics, plots_dir / LEARNING_CURVES_PLOT_NAME)
+    _plot_learning_curves(run_metrics, plots_dir / LEARNING_CURVES_PLOT_NAME)
     _plot_memory_gap(memory_gap, plots_dir / MEMORY_GAP_PLOT_NAME)
     _plot_diagnostic_evolution(
         diagnostic_evolution,
         plots_dir / DIAGNOSTIC_EVOLUTION_PLOT_NAME,
     )
-    _plot_above_null(final_above_null, plots_dir / FINAL_DIAGNOSTIC_PLOT_NAME)
+    _plot_above_null(final_margin_above_null, plots_dir / FINAL_DIAGNOSTIC_PLOT_NAME)
     _plot_behavioral(
         run_metrics,
         EnvName.simple_spread.value,
@@ -468,37 +600,59 @@ def main() -> int:
     return 0
 
 
-def _plot_final_returns(run_metrics: Sequence[RunMetrics], output_path: Path) -> None:
-    values = [
-        _mean(
-            [
-                metrics.behavioral_metrics.get(
-                    BehavioralMetricName.return_mean.value,
-                    math.nan,
-                )
-                for metrics in run_metrics
-                if metrics.env_name == env_name and metrics.config_id == config_id
-            ]
-        )
-        for env_name in [env.value for env in EnvName]
-        for config_id in [config.value for config in ConfigId]
+def _plot_learning_curves(run_metrics: Sequence[RunMetrics], output_path: Path) -> None:
+    series = [
+        metrics.learning_curve
+        for metrics in run_metrics
+        if metrics.learning_curve
     ]
-    _write_bar_plot(values, _config_colors_repeated(), output_path)
+    colors = [
+        _config_color(metrics.config_id)
+        for metrics in run_metrics
+        if metrics.learning_curve
+    ]
+    labels = [
+        f"{_display_env(metrics.env_name)} {_display_config(metrics.config_id)} seed {metrics.seed}"
+        for metrics in run_metrics
+        if metrics.learning_curve
+    ]
+    _write_xy_line_plot(
+        series=series,
+        colors=colors,
+        output_path=output_path,
+        title=PlotTitle.final_returns.value,
+        x_label=AxisLabel.training_step.value,
+        y_label=AxisLabel.return_mean.value,
+        series_labels=labels,
+    )
 
 
 def _plot_memory_gap(
     memory_gap: Mapping[str, Mapping[str, object]],
     output_path: Path,
 ) -> None:
+    sorted_keys = sorted(memory_gap)
     values = [
         float(values_by_key.get(AggregateKey.mean.value, math.nan))
         for _, values_by_key in sorted(memory_gap.items())
     ]
     colors = [
         RgbColor.ippo_rnn.value if IPPO_ALGORITHM_LABEL in key else RgbColor.mappo_rnn.value
-        for key in sorted(memory_gap)
+        for key in sorted_keys
     ]
-    _write_bar_plot(values, colors, output_path)
+    _write_bar_plot(
+        values=values,
+        colors=colors,
+        output_path=output_path,
+        title=PlotTitle.memory_gap.value,
+        x_label=AxisLabel.algorithm_pair.value,
+        y_label=AxisLabel.return_delta.value,
+        x_tick_labels=[_display_summary_key(key) for key in sorted_keys],
+        legend_items=(
+            (IPPO_ALGORITHM_LABEL, RgbColor.ippo_rnn.value),
+            (MAPPO_ALGORITHM_LABEL, RgbColor.mappo_rnn.value),
+        ),
+    )
 
 
 def _plot_diagnostic_evolution(
@@ -507,6 +661,7 @@ def _plot_diagnostic_evolution(
 ) -> None:
     series: list[list[float]] = []
     colors: list[tuple[int, int, int]] = []
+    series_labels: list[str] = []
     for env_name in [env.value for env in EnvName]:
         progress_values = diagnostic_evolution.get(env_name, {})
         values = [
@@ -514,31 +669,52 @@ def _plot_diagnostic_evolution(
             for progress in (25, 50, 75, 100)
         ]
         series.append(values)
+        series_labels.append(_display_env(env_name))
         colors.append(
             RgbColor.mappo_rnn.value
             if env_name == EnvName.simple_spread.value
             else RgbColor.diagnostic_dai.value
         )
-    _write_line_plot(series, colors, output_path)
+    _write_line_plot(
+        series=series,
+        colors=colors,
+        output_path=output_path,
+        title=PlotTitle.diagnostic_evolution.value,
+        x_label=AxisLabel.progress.value,
+        y_label=AxisLabel.diagnostic_value.value,
+        x_tick_labels=("25%", "50%", "75%", "100%"),
+        series_labels=series_labels,
+    )
 
 
 def _plot_above_null(
-    final_above_null: Mapping[str, Mapping[str, str]],
+    final_margin_above_null: Mapping[str, Mapping[str, float]],
     output_path: Path,
 ) -> None:
     values: list[float] = []
     colors: list[tuple[int, int, int]] = []
-    for row_key in sorted(final_above_null):
-        row = final_above_null[row_key]
+    labels: list[str] = []
+    for row_key in sorted(final_margin_above_null):
+        row = final_margin_above_null[row_key]
         for diagnostic_name in (
             _normalized_metric_name(DiagnosticLabel.HAR.value),
             _normalized_metric_name(DiagnosticLabel.PIF.value),
             _normalized_metric_name(DiagnosticLabel.AA.value),
             _normalized_metric_name(DiagnosticLabel.DAI.value),
         ):
-            values.append(_fraction_from_count(row.get(diagnostic_name, "0/0")))
+            values.append(row.get(diagnostic_name, math.nan))
             colors.append(_diagnostic_color(diagnostic_name))
-    _write_bar_plot(values, colors, output_path)
+            labels.append(f"{_display_summary_key(row_key)}\n{diagnostic_name}")
+    _write_bar_plot(
+        values=values,
+        colors=colors,
+        output_path=output_path,
+        title=PlotTitle.above_null.value,
+        x_label=AxisLabel.run_config.value,
+        y_label=AxisLabel.diagnostic_margin.value,
+        x_tick_labels=labels,
+        legend_items=_diagnostic_legend_items(),
+    )
 
 
 def _plot_behavioral(
@@ -547,6 +723,11 @@ def _plot_behavioral(
     metric_names: Sequence[str],
     output_path: Path,
 ) -> None:
+    labels = [
+        f"{_display_behavioral_metric(metric_name)}\n{_display_config(config_id)}"
+        for metric_name in metric_names
+        for config_id in [config.value for config in ConfigId]
+    ]
     values = [
         _mean(
             [
@@ -558,78 +739,208 @@ def _plot_behavioral(
         for metric_name in metric_names
         for config_id in [config.value for config in ConfigId]
     ]
-    _write_bar_plot(values, _config_colors_repeated(), output_path)
+    title = (
+        PlotTitle.behavioral_spread.value
+        if env_name == EnvName.simple_spread.value
+        else PlotTitle.behavioral_speaker_listener.value
+    )
+    _write_bar_plot(
+        values=values,
+        colors=_config_colors_repeated(),
+        output_path=output_path,
+        title=title,
+        x_label=AxisLabel.run_config.value,
+        y_label=AxisLabel.behavioral_value.value,
+        x_tick_labels=labels,
+        legend_items=_config_legend_items(),
+    )
 
 
 def _write_bar_plot(
     values: Sequence[float],
     colors: Sequence[tuple[int, int, int]],
     output_path: Path,
+    title: str,
+    x_label: str,
+    y_label: str,
+    x_tick_labels: Sequence[str],
+    legend_items: Sequence[tuple[str, tuple[int, int, int]]] = (),
 ) -> None:
-    canvas = _new_canvas()
-    _draw_axes(canvas)
     finite_values = [value for value in values if math.isfinite(value)]
-    minimum_value = min([0.0] + finite_values)
-    maximum_value = max([DEFAULT_EMPTY_MAX] + finite_values)
-    value_range = max(maximum_value - minimum_value, MINIMUM_PLOT_RANGE)
-    plot_width = canvas.width - PLOT_MARGIN_LEFT - PLOT_MARGIN_RIGHT
-    plot_height = canvas.height - PLOT_MARGIN_TOP - PLOT_MARGIN_BOTTOM
-    step = plot_width / max(len(values), 1)
-    zero_y = _value_to_y(0.0, minimum_value, value_range, plot_height)
-    for index, value in enumerate(values):
+    figure, axes = _new_figure(title, x_label, y_label)
+    x_values = list(range(len(values)))
+    plot_values = [value if math.isfinite(value) else 0.0 for value in values]
+    bar_colors = [
+        _matplotlib_color(colors[index % len(colors)] if colors else RgbColor.muted.value)
+        for index in x_values
+    ]
+    bars = axes.bar(x_values, plot_values, color=bar_colors)
+    for bar_index, value in enumerate(values):
         if not math.isfinite(value):
+            bars[bar_index].set_alpha(NAN_BAR_ALPHA)
             continue
-        x_center = int(PLOT_MARGIN_LEFT + step * (index + 0.5))
-        y_value = _value_to_y(value, minimum_value, value_range, plot_height)
-        top = min(zero_y, y_value)
-        bottom = max(zero_y, y_value)
-        color = colors[index % len(colors)] if colors else RgbColor.muted.value
-        _fill_rect(
-            canvas,
-            x_center - BAR_WIDTH,
-            top,
-            x_center + BAR_WIDTH,
-            bottom,
-            color,
+        offset = _annotation_offset(finite_values)
+        vertical_alignment = "bottom" if value >= 0.0 else "top"
+        axes.text(
+            bar_index,
+            value + offset if value >= 0.0 else value - offset,
+            _format_number(value),
+            ha="center",
+            va=vertical_alignment,
+            fontsize=ANNOTATION_FONT_SIZE,
+            color=_matplotlib_color(RgbColor.axis.value),
         )
-    _write_png(output_path, canvas)
+    _style_axis(
+        axes=axes,
+        x_tick_labels=x_tick_labels,
+        legend_items=legend_items,
+    )
+    _set_y_limits(axes, finite_values)
+    _save_figure(figure, output_path)
 
 
 def _write_line_plot(
     series: Sequence[Sequence[float]],
     colors: Sequence[tuple[int, int, int]],
     output_path: Path,
+    title: str,
+    x_label: str,
+    y_label: str,
+    x_tick_labels: Sequence[str],
+    series_labels: Sequence[str],
 ) -> None:
-    canvas = _new_canvas()
-    _draw_axes(canvas)
+    figure, axes = _new_figure(title, x_label, y_label)
     all_values = [value for values in series for value in values if math.isfinite(value)]
-    minimum_value = min([0.0] + all_values)
-    maximum_value = max([DEFAULT_EMPTY_MAX] + all_values)
-    value_range = max(maximum_value - minimum_value, MINIMUM_PLOT_RANGE)
-    plot_width = canvas.width - PLOT_MARGIN_LEFT - PLOT_MARGIN_RIGHT
-    plot_height = canvas.height - PLOT_MARGIN_TOP - PLOT_MARGIN_BOTTOM
     for series_index, values in enumerate(series):
-        points: list[tuple[int, int]] = []
+        x_values: list[int] = []
+        y_values: list[float] = []
         for value_index, value in enumerate(values):
             if not math.isfinite(value):
                 continue
-            denominator = max(len(values) - 1, 1)
-            x = int(PLOT_MARGIN_LEFT + plot_width * (value_index / denominator))
-            y = _value_to_y(value, minimum_value, value_range, plot_height)
-            points.append((x, y))
+            x_values.append(value_index)
+            y_values.append(value)
         color = colors[series_index % len(colors)] if colors else RgbColor.muted.value
-        for left, right in zip(points, points[1:]):
-            _draw_line(canvas, left, right, color)
-        for x, y in points:
-            _fill_rect(
-                canvas,
-                x - POINT_SIZE,
-                y - POINT_SIZE,
-                x + POINT_SIZE,
-                y + POINT_SIZE,
-                color,
-            )
-    _write_png(output_path, canvas)
+        label = (
+            series_labels[series_index]
+            if series_index < len(series_labels)
+            else f"Series {series_index + 1}"
+        )
+        axes.plot(
+            x_values,
+            y_values,
+            color=_matplotlib_color(color),
+            marker="o",
+            linewidth=LINE_WIDTH,
+            label=label,
+        )
+    _style_axis(
+        axes=axes,
+        x_tick_labels=x_tick_labels,
+        legend_items=(),
+    )
+    if series_labels:
+        axes.legend(loc="best", fontsize=TICK_LABEL_FONT_SIZE)
+    _set_y_limits(axes, all_values)
+    _save_figure(figure, output_path)
+
+
+def _write_xy_line_plot(
+    series: Sequence[Sequence[tuple[int, float]]],
+    colors: Sequence[tuple[int, int, int]],
+    output_path: Path,
+    title: str,
+    x_label: str,
+    y_label: str,
+    series_labels: Sequence[str],
+) -> None:
+    figure, axes = _new_figure(title, x_label, y_label)
+    all_values = [value for values in series for _, value in values if math.isfinite(value)]
+    for series_index, values in enumerate(series):
+        x_values = [step for step, value in values if math.isfinite(value)]
+        y_values = [value for _, value in values if math.isfinite(value)]
+        color = colors[series_index % len(colors)] if colors else RgbColor.muted.value
+        label = (
+            series_labels[series_index]
+            if series_index < len(series_labels)
+            else f"Series {series_index + 1}"
+        )
+        axes.plot(
+            x_values,
+            y_values,
+            color=_matplotlib_color(color),
+            marker="o",
+            markersize=3,
+            linewidth=LINE_WIDTH,
+            label=label,
+        )
+    axes.tick_params(axis="x", labelsize=TICK_LABEL_FONT_SIZE)
+    axes.tick_params(axis="y", labelsize=TICK_LABEL_FONT_SIZE)
+    axes.legend(loc="best", fontsize=TICK_LABEL_FONT_SIZE)
+    _set_y_limits(axes, all_values)
+    _save_figure(figure, output_path)
+
+
+def _new_figure(title: str, x_label: str, y_label: str) -> tuple[Figure, Axes]:
+    figure, axes = plt.subplots(
+        figsize=(PLOT_FIGURE_WIDTH, PLOT_FIGURE_HEIGHT),
+        dpi=PLOT_DPI,
+    )
+    axes.set_title(title, fontsize=TITLE_FONT_SIZE)
+    axes.set_xlabel(x_label, fontsize=AXIS_LABEL_FONT_SIZE)
+    axes.set_ylabel(y_label, fontsize=AXIS_LABEL_FONT_SIZE)
+    axes.grid(axis="y", alpha=GRID_ALPHA)
+    return figure, axes
+
+
+def _style_axis(
+    axes: Axes,
+    x_tick_labels: Sequence[str],
+    legend_items: Sequence[tuple[str, tuple[int, int, int]]],
+) -> None:
+    axes.set_xticks(list(range(len(x_tick_labels))))
+    axes.set_xticklabels(
+        list(x_tick_labels),
+        rotation=TICK_LABEL_ROTATION_DEGREES,
+        ha="right",
+        fontsize=TICK_LABEL_FONT_SIZE,
+    )
+    axes.tick_params(axis="y", labelsize=TICK_LABEL_FONT_SIZE)
+    if legend_items:
+        handles = [
+            Patch(facecolor=_matplotlib_color(color), label=label)
+            for label, color in legend_items
+        ]
+        axes.legend(handles=handles, loc="best", fontsize=TICK_LABEL_FONT_SIZE)
+
+
+def _set_y_limits(axes: Axes, values: Sequence[float]) -> None:
+    finite_values = [value for value in values if math.isfinite(value)]
+    if not finite_values:
+        axes.set_ylim(0.0, DEFAULT_EMPTY_MAX)
+        return
+    minimum_value = min([0.0] + finite_values)
+    maximum_value = max([0.0] + finite_values)
+    value_range = max(maximum_value - minimum_value, MINIMUM_PLOT_RANGE)
+    padding = value_range * BAR_VALUE_PADDING_RATIO
+    axes.set_ylim(minimum_value - padding, maximum_value + padding)
+
+
+def _annotation_offset(values: Sequence[float]) -> float:
+    if not values:
+        return MINIMUM_PLOT_RANGE * BAR_VALUE_PADDING_RATIO
+    value_range = max(max(values) - min(values), MINIMUM_PLOT_RANGE)
+    return value_range * BAR_VALUE_PADDING_RATIO
+
+
+def _save_figure(figure: Figure, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.tight_layout()
+    figure.savefig(output_path, format="png")
+    plt.close(figure)
+
+
+def _matplotlib_color(color: tuple[int, int, int]) -> str:
+    return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
 
 
 def _new_canvas() -> Canvas:
@@ -821,6 +1132,13 @@ def _run_metrics_to_jsonable(metrics: RunMetrics) -> dict[str, object]:
                 math.nan,
             )
         },
+        RunMetricKey.learning_curve.value: [
+            {
+                LearningCurveKey.step.value: step,
+                LearningCurveKey.value.value: value,
+            }
+            for step, value in metrics.learning_curve
+        ],
     }
 
 
@@ -867,6 +1185,18 @@ def _config_colors_repeated() -> list[tuple[int, int, int]]:
     ]
 
 
+def _config_color(config_id: str) -> tuple[int, int, int]:
+    if config_id == ConfigId.ippo_ff.value:
+        return RgbColor.ippo_ff.value
+    if config_id == ConfigId.ippo_rnn.value:
+        return RgbColor.ippo_rnn.value
+    if config_id == ConfigId.mappo_ff.value:
+        return RgbColor.mappo_ff.value
+    if config_id == ConfigId.mappo_rnn.value:
+        return RgbColor.mappo_rnn.value
+    return RgbColor.muted.value
+
+
 def _diagnostic_color(name: str) -> tuple[int, int, int]:
     if name.startswith(DiagnosticLabel.HAR.value):
         return RgbColor.diagnostic_har.value
@@ -877,6 +1207,117 @@ def _diagnostic_color(name: str) -> tuple[int, int, int]:
     if name.startswith(DiagnosticLabel.DAI.value):
         return RgbColor.diagnostic_dai.value
     return RgbColor.diagnostic_oar.value
+
+
+def _config_legend_items() -> tuple[tuple[str, tuple[int, int, int]], ...]:
+    return (
+        (DisplayLabel.ippo_ff.value, RgbColor.ippo_ff.value),
+        (DisplayLabel.ippo_rnn.value, RgbColor.ippo_rnn.value),
+        (DisplayLabel.mappo_ff.value, RgbColor.mappo_ff.value),
+        (DisplayLabel.mappo_rnn.value, RgbColor.mappo_rnn.value),
+    )
+
+
+def _diagnostic_legend_items() -> tuple[tuple[str, tuple[int, int, int]], ...]:
+    return (
+        (DiagnosticLabel.HAR.value, RgbColor.diagnostic_har.value),
+        (DiagnosticLabel.PIF.value, RgbColor.diagnostic_pif.value),
+        (DiagnosticLabel.AA.value, RgbColor.diagnostic_aa.value),
+        (DiagnosticLabel.DAI.value, RgbColor.diagnostic_dai.value),
+    )
+
+
+def _display_env(env_name: str) -> str:
+    if env_name == EnvName.simple_spread.value:
+        return DisplayLabel.simple_spread.value
+    if env_name == EnvName.simple_speaker_listener.value:
+        return DisplayLabel.simple_speaker_listener.value
+    return env_name
+
+
+def _display_config(config_id: str) -> str:
+    if config_id == ConfigId.ippo_ff.value:
+        return DisplayLabel.ippo_ff.value
+    if config_id == ConfigId.ippo_rnn.value:
+        return DisplayLabel.ippo_rnn.value
+    if config_id == ConfigId.mappo_ff.value:
+        return DisplayLabel.mappo_ff.value
+    if config_id == ConfigId.mappo_rnn.value:
+        return DisplayLabel.mappo_rnn.value
+    return config_id
+
+
+def _display_behavioral_metric(metric_name: str) -> str:
+    if metric_name == BehavioralMetricName.coverage_success_rate.value:
+        return DisplayLabel.coverage_success_rate.value
+    if metric_name == BehavioralMetricName.final_landmark_distance_mean.value:
+        return DisplayLabel.final_landmark_distance_mean.value
+    if metric_name == BehavioralMetricName.collision_rate.value:
+        return DisplayLabel.collision_rate.value
+    if metric_name == BehavioralMetricName.target_success_rate.value:
+        return DisplayLabel.target_success_rate.value
+    if metric_name == BehavioralMetricName.final_target_distance_mean.value:
+        return DisplayLabel.final_target_distance_mean.value
+    if metric_name == BehavioralMetricName.wrong_landmark_rate.value:
+        return DisplayLabel.wrong_landmark_rate.value
+    return metric_name
+
+
+def _display_summary_key(summary_key: str) -> str:
+    parts = summary_key.split(CONFIG_SEPARATOR)
+    if len(parts) != 2:
+        return summary_key
+    return f"{_display_env(parts[0])}\n{_display_config(parts[1])}"
+
+
+def _run_key(metrics: RunMetrics) -> str:
+    return (
+        f"{metrics.env_name}{CONFIG_SEPARATOR}{metrics.config_id}"
+        f"{CONFIG_SEPARATOR}{SEED_PREFIX}{metrics.seed}"
+    )
+
+
+def _load_learning_curve(run_dir: Path) -> list[tuple[int, float]]:
+    scalar_path = _learning_curve_path(run_dir)
+    if scalar_path is None:
+        return []
+    points: list[tuple[int, float]] = []
+    with scalar_path.open(newline="", encoding="utf-8") as scalar_file:
+        for row in csv.reader(scalar_file):
+            if len(row) < 2:
+                continue
+            step = _numeric(row[0])
+            value = _numeric(row[1])
+            if math.isfinite(step) and math.isfinite(value):
+                points.append((int(step), value))
+    return points
+
+
+def _learning_curve_path(run_dir: Path) -> Path | None:
+    metadata_path = run_dir / ArtifactFileName.run_metadata.value
+    if metadata_path.exists():
+        metadata = _load_json(metadata_path)
+        checkpoint = _nested_mapping(metadata, JsonKey.final_checkpoint)
+        source_path = checkpoint.get(JsonKey.source_path.value)
+        if isinstance(source_path, str):
+            parts = Path(source_path).parts
+            if len(parts) >= 3:
+                experiment_name = parts[-3]
+                candidate = (
+                    run_dir
+                    / experiment_name
+                    / experiment_name
+                    / SCALARS_DIRECTORY_NAME
+                    / EVAL_RETURN_SCALAR_FILE_NAME
+                )
+                if candidate.exists():
+                    return candidate
+    candidates = sorted(
+        run_dir.glob(
+            f"*/*/{SCALARS_DIRECTORY_NAME}/{EVAL_RETURN_SCALAR_FILE_NAME}"
+        )
+    )
+    return candidates[-1] if candidates else None
 
 
 def _mapping_float(
@@ -947,6 +1388,14 @@ def _numeric(value: object) -> float:
         except ValueError:
             return math.nan
     return math.nan
+
+
+def _format_number(value: float) -> str:
+    if abs(value) >= 100.0:
+        return f"{value:.0f}"
+    if abs(value) >= 10.0:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
 
 
 if __name__ == "__main__":

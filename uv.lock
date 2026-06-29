@@ -902,6 +902,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dec-pomdp-diagnostics" },
+    { name = "matplotlib" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "python-dotenv" },
@@ -917,6 +918,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "dec-pomdp-diagnostics", git = "https://github.com/KaleabTessera/probing-dec-pomdps.git?rev=c8881e8dc41258727ddf814c9348f6bbc0177a56" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv" },
