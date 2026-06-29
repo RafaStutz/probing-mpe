@@ -25,7 +25,8 @@ class TestValue(float, Enum):
 
 
 READABLE_PLOT_MINIMUM_BYTES = 10_000
-LEARNING_CURVE_LAST_STEP = 2
+LEARNING_CURVE_FRAME_MULTIPLIER = 128
+LEARNING_CURVE_LAST_STEP = 2 * LEARNING_CURVE_FRAME_MULTIPLIER
 LEARNING_CURVE_LAST_VALUE = 12.0
 
 
@@ -169,6 +170,30 @@ def _write_final_artifacts(
         json.dumps(behavioral_metrics),
         encoding="utf-8",
     )
+    (run_dir / "run_metadata.json").write_text(
+        json.dumps(
+            {
+                "final_checkpoint": {
+                    "source_path": str(
+                        run_dir
+                        / f"{config_id}_experiment"
+                        / "checkpoints"
+                        / "checkpoint_256.pt"
+                    )
+                },
+                "commands": {
+                    "training": [
+                        "experiment.on_policy_collected_frames_per_batch="
+                        f"{LEARNING_CURVE_FRAME_MULTIPLIER}"
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_dir = run_dir / f"{config_id}_experiment" / "checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "checkpoint_256.pt").write_bytes(b"checkpoint")
     scalar_dir = run_dir / f"{config_id}_experiment" / f"{config_id}_experiment" / "scalars"
     scalar_dir.mkdir(parents=True)
     (scalar_dir / "eval_reward_episode_reward_mean.csv").write_text(

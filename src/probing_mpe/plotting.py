@@ -141,7 +141,11 @@ class AxisLabel(str, Enum):
     return_delta = "Return delta"
     diagnostic_value = "Mean normalized diagnostic"
     behavioral_value = "Metric value"
-    training_step = "BenchMARL evaluation step"
+    training_step = "Training frames"
+
+
+class TrainingOverride(str, Enum):
+    frames_per_batch = "experiment.on_policy_collected_frames_per_batch="
 
 
 class DisplayLabel(str, Enum):
@@ -172,6 +176,8 @@ class JsonKey(str, Enum):
     normalized = "normalized"
     normalized_mean = "normalized_mean"
     training_progress_percent = "training_progress_percent"
+    commands = "commands"
+    training = "training"
 
 
 class SummaryKey(str, Enum):
@@ -1281,6 +1287,7 @@ def _load_learning_curve(run_dir: Path) -> list[tuple[int, float]]:
     scalar_path = _learning_curve_path(run_dir)
     if scalar_path is None:
         return []
+    frame_multiplier = _learning_curve_frame_multiplier(run_dir)
     points: list[tuple[int, float]] = []
     with scalar_path.open(newline="", encoding="utf-8") as scalar_file:
         for row in csv.reader(scalar_file):
@@ -1289,8 +1296,29 @@ def _load_learning_curve(run_dir: Path) -> list[tuple[int, float]]:
             step = _numeric(row[0])
             value = _numeric(row[1])
             if math.isfinite(step) and math.isfinite(value):
-                points.append((int(step), value))
+                points.append((int(step * frame_multiplier), value))
     return points
+
+
+def _learning_curve_frame_multiplier(run_dir: Path) -> int:
+    metadata_path = run_dir / ArtifactFileName.run_metadata.value
+    if not metadata_path.exists():
+        return 1
+    metadata = _load_json(metadata_path)
+    commands = metadata.get(JsonKey.commands.value)
+    if not isinstance(commands, Mapping):
+        return 1
+    training_command = commands.get(JsonKey.training.value)
+    if not isinstance(training_command, Sequence) or isinstance(training_command, str):
+        return 1
+    for item in training_command:
+        if not isinstance(item, str):
+            continue
+        if item.startswith(TrainingOverride.frames_per_batch.value):
+            value = item[len(TrainingOverride.frames_per_batch.value) :]
+            if value.isdigit():
+                return int(value)
+    return 1
 
 
 def _learning_curve_path(run_dir: Path) -> Path | None:
