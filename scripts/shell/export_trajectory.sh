@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python scripts/export_benchmarl_trajectory.py "$@"
+PYTHON_EXECUTABLE="${PYTHON:-python3}"
+"${PYTHON_EXECUTABLE}" scripts/export_benchmarl_trajectory.py "$@"

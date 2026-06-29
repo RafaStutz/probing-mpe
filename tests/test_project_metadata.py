@@ -9,6 +9,8 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH: Path = PROJECT_ROOT / "pyproject.toml"
 RUNTIME_DEPENDENCIES: set[str] = {
     "dec-pomdp-diagnostics",
+    "imageio",
+    "imageio-ffmpeg",
     "numpy",
     "PyYAML",
     "python-dotenv",
